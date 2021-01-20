@@ -7,7 +7,7 @@ from requests import get
 from requests.exceptions import RequestException
 from contextlib import closing
 from bs4 import BeautifulSoup
-
+from pathvalidate import sanitize_filename
 
 # BEGIN https://realpython.com/python-web-scraping-practical-introduction/
 def simple_get(url):
@@ -48,6 +48,8 @@ def log_error(e):
     make it do anything.
     """
     loguru.logger.error(e)
+
+
 # END https://realpython.com/python-web-scraping-practical-introduction/
 
 
@@ -58,12 +60,13 @@ def process_the_find(find):
     :return: Return the full Pastebin URL and the short paste string.
     """
     the_ref = find.get('href')
+    the_title = sanitize_filename(find.text)
     pastebin_url = "https://pastebin.com/raw" + the_ref
     loguru.logger.info(find.contents)
-    return pastebin_url, the_ref
+    return pastebin_url, the_ref, the_title
 
 
-def get_and_save_the_paste(the_target, pastebin_url, pastebin_ref):
+def get_and_save_the_paste(the_target, pastebin_url, pastebin_ref, pastebin_title):
     """
     This function does the heavy listing. It does the Python equivalent of mkdir -p to prepare the environment for the
     download. The paste that has been identified is downloaded and saved to a directory that reflects the owning user.
@@ -78,7 +81,7 @@ def get_and_save_the_paste(the_target, pastebin_url, pastebin_ref):
     # Download the paste
     raw_html = simple_get(pastebin_url)
     # Write the paste to disk
-    paste_file = the_path + pastebin_ref
+    paste_file = the_path + "/" + pastebin_title + " " + sanitize_filename(pastebin_ref)
     loguru.logger.info("Saving to {paste_file}.", paste_file=paste_file)
     with open(paste_file, 'wb') as my_file:
         my_file.write(raw_html)
@@ -116,7 +119,7 @@ def parse_page_for_pastes(raw_html):
     all_pastebin_urls = set()
     soup = BeautifulSoup(raw_html, 'html.parser')
     potential_pastes = [tag for tag in soup.find_all("td")]
-    the_indicator = "i_p0"
+    the_indicator = "status -public"
     for i in range(len(potential_pastes)):
         pastes_per_page = pastes_per_page + 1
         regex_search = re.search(the_indicator, str(potential_pastes[i]))
@@ -124,18 +127,18 @@ def parse_page_for_pastes(raw_html):
             the_contender = potential_pastes[i]
             potential_links = [tag for tag in the_contender.find_all("a")]
             nice_find = potential_links[0]
-            pastebin_url, pastebin_ref = process_the_find(nice_find)
+            pastebin_url, pastebin_ref, pastebin_title = process_the_find(nice_find)
             all_pastebin_urls.add(pastebin_url)
-            get_and_save_the_paste(the_target, pastebin_url, pastebin_ref)
+            get_and_save_the_paste(the_target, pastebin_url, pastebin_ref, pastebin_title)
             pastes_saved = pastes_saved + 1
     loguru.logger.success("Turning the page.")
-    return(pastes_saved)
+    return (pastes_saved)
 
 
 def count_download_all_pastes(pastebin_profile, the_target):
     """
-    This function takes a Pastebin username and user profile URL as input. In return, the number of pages of pastes 
-    for that user is printed. Additionally, this function calls parse_page_for_pastes() which in turn calls the 
+    This function takes a Pastebin username and user profile URL as input. In return, the number of pages of pastes
+    for that user is printed. Additionally, this function calls parse_page_for_pastes() which in turn calls the
     function that actually saves pastes from Pastebin and writes them to disk.
     :param pastebin_profile: The URL to the Pastebin user's profile.
     :param the_target: The Pastebin user that has been specified.
@@ -146,6 +149,9 @@ def count_download_all_pastes(pastebin_profile, the_target):
     chowder = BeautifulSoup(the_hunt, 'html.parser')
     div_of_pages = chowder.findAll("div", {"class": "pagination"})
     number_of_pages = count_all_pages(div_of_pages)
+    # Dirty hack to fix users that have too few posts for pagination
+    if number_of_pages < 1:
+        number_of_pages = 1
     loguru.logger.debug(
         "TARGET ANALYZED: {the_target} has {pages} pages of pastes.", the_target=the_target, pages=number_of_pages)
     total_pastes_saved = int()
@@ -176,7 +182,7 @@ def zip_the_pastes(username):
     dir_name = "pastes/" + username
     output_filename = username
     shutil.make_archive(output_filename, 'zip', dir_name)
-    
+
 
 def main(the_target, to_zip):
     """
@@ -199,7 +205,7 @@ def main(the_target, to_zip):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-            description="""Pastebin Bisque: A Pastebin User Scraper // This is a Python program that will list and retrieve the contents of 
+        description="""Pastebin Bisque: A Pastebin User Scraper // This is a Python program that will list and retrieve the contents of 
                        all of the public pastes of the specified user. This is implemented using BeautifulSoup rather 
                        than the Pastebin API for educational purposes.""")
     parser.add_argument('--username', '-u', default="Demonslay335",
